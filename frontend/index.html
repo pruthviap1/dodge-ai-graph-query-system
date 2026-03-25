@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Graph Query System</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <h1>AI Graph Query System</h1>
+
+      <div class="panel">
+        <label for="backendUrl">Backend URL</label>
+        <input id="backendUrl" type="text" placeholder="http://localhost:8000" />
+        <button id="saveBackendUrl" type="button">Save</button>
+      </div>
+
+      <div class="chat">
+        <form id="chatForm">
+          <input id="question" type="text" placeholder="Ask about orders, deliveries, invoices, payments..." required />
+          <button type="submit">Ask</button>
+        </form>
+        <div id="answer" class="answer"></div>
+        <div id="debug" class="debug"></div>
+      </div>
+
+      <div class="graph-wrap">
+        <h2>Graph</h2>
+        <div id="graph"></div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+
