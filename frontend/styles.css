@@ -104,6 +104,84 @@ button:hover {
 #graph {
   height: 520px;
   border-radius: 8px;
-  border: 1px dashed var(--border);
+  border: 1px solid #3b82f6;
+  background: #ffffff;
+}
+  }
+
+  .brand h1 {
+    font-size: 1.25rem;
+  }
+
+  .tagline {
+    display: none;
+  }
+
+  .card {
+    padding: var(--spacing-lg);
+  }
+
+  .prompt-chips {
+    gap: var(--spacing-xs);
+  }
+
+  .prompt-chip {
+    font-size: 0.8rem;
+  }
+
+  .answer {
+    font-size: 0.9rem;
+  }
+
+  .debug {
+    font-size: 0.7rem;
+  }
+}
+
+/* ============================================================================
+   SCROLLBAR STYLING (Global)
+   ============================================================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(99, 102, 241, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.5);
+}
+
+/* ============================================================================
+   ANIMATIONS & EFFECTS
+   ============================================================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card {
+  animation: fadeIn var(--transition-slow);
+}
+
+/* Selection */
+::selection {
+  background: rgba(99, 102, 241, 0.3);
+  color: var(--text-primary);
 }
 

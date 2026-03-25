@@ -52,6 +52,46 @@ class GeminiClient:
             keywords = re.findall(r"[a-zA-Z0-9_-]{3,}", question.lower())
             q = question.lower()
 
+            # Check for billing document flow trace query
+            trace_doc_flow_patterns = [
+                r"trace\s+.*\s*(?:full\s+)?flow",  # "trace ... flow"
+                r"billing\s+(?:document|invoice)\s+flow",  # "billing document flow"
+                r"(?:full\s+)?flow.*(?:order|delivery|invoice)",  # "flow ... order/delivery/invoice"
+                r"(?:order|delivery|invoice).*(?:full\s+)?flow",  # "order/delivery/invoice ... flow"
+                r"sales\s+order.*delivery.*invoice",  # "sales order ... delivery ... invoice"
+                r"document\s+flow",  # "document flow"
+                r"trace.*(?:order|delivery|invoice|billing|invoice)",  # "trace ... <entity>"
+            ]
+            is_trace_doc_flow = any(re.search(pattern, q) for pattern in trace_doc_flow_patterns)
+
+            # Check for incomplete orders query
+            incomplete_patterns = [
+                r"incomplete\s+orders?",
+                r"broken\s+flow",
+                r"missing\s+invoice",
+                r"not\s+delivered",
+                r"not\s+paid",
+                r"without\s+invoice",
+                r"without\s+delivery",
+                r"without\s+payment",
+                r"no\s+invoice",
+                r"no\s+delivery",
+                r"no\s+payment",
+            ]
+            is_incomplete_query = any(re.search(pattern, q) for pattern in incomplete_patterns)
+
+            # Check for product billing volume analysis queries
+            billing_analysis_patterns = [
+                r"products?\s+.*\s*(?:highest|most|most\s+number|associated)\s+.*billing",
+                r"billing\s+(?:documents?|invoices?)\s+.*\s+products?",
+                r"which\s+products?\s+.*\s+(?:billing|invoice)",
+                r"product.*count.*(?:billing|invoice)",
+                r"(?:billing|invoice).*count.*products?",
+                r"top\s+products?.*(?:billing|invoice)",
+                r"highest\s+(?:billing|invoice).*products?",
+            ]
+            is_product_billing_query = any(re.search(pattern, q) for pattern in billing_analysis_patterns)
+
             # Best-effort ID extraction (works without Gemini key).
             order_id = None
             delivery_id = None
@@ -66,9 +106,22 @@ class GeminiClient:
             m = re.search(r"\bdelivery\s*([0-9]{6,})\b", q)
             if m:
                 delivery_id = m.group(1)
-            m = re.search(r"\binvoice\s*([0-9]{6,})\b", q)
+            
+            # Invoice ID extraction: match "invoice 123456" OR "billing document/invoice 123456" OR "INV-123456" OR just numbers after "invoice"
+            m = re.search(r"\b(?:invoice|inv)\s*[-]?([0-9]{5,})\b", q)
             if m:
                 invoice_id = m.group(1)
+            # Also try matching "billing document" or "billing invoice" pattern
+            if not invoice_id:
+                m = re.search(r"\b(?:billing\s+(?:document|invoice))\s*[-]?([0-9]{5,})\b", q)
+                if m:
+                    invoice_id = m.group(1)
+            # Also try matching standalone invoice format like INV-123456
+            if not invoice_id:
+                m = re.search(r"\binv[-]?([0-9]{6,})\b", q)
+                if m:
+                    invoice_id = m.group(1)
+            
             m = re.search(r"\bcustomer\s*([0-9]{5,})\b", q)
             if m:
                 customer_id = m.group(1)
@@ -79,8 +132,15 @@ class GeminiClient:
             if m:
                 accounting_document = m.group(1)
 
-            # Operation priority: order > delivery > invoice > customer > product > keyword.
-            if order_id:
+            # Operation priority: trace_doc_flow > product_billing > incomplete > order > delivery > invoice > customer > product > keyword.
+            if is_trace_doc_flow:
+                # Document flow trace (will use invoice_id if provided, or pick a sample)
+                operation = "trace_billing_document_flow"
+            elif is_product_billing_query:
+                operation = "analyze_product_billing_volume"
+            elif is_incomplete_query:
+                operation = "find_incomplete_orders"
+            elif order_id:
                 operation = "trace_order"
             elif delivery_id:
                 operation = "trace_delivery"
@@ -111,15 +171,34 @@ class GeminiClient:
             )
 
         prompt = f"""
-You are part of an AI Graph Query System.
+You are part of an AI Graph Query System for analyzing ERP supply chain and billing data.
 Convert a user's natural-language question into a JSON object that matches the schema below.
+
+IMPORTANT CONCEPTS:
+- "billing documents" = "invoices"
+- Document flow tracing: Sales Order → Delivery → Invoice → Payment/Journal Entry
+- "journal entry" refers to payments and accounting records linked to invoices
 
 Rules:
 - Output ONLY valid JSON (no markdown, no comments).
-- Choose `operation` from: `trace_order`, `trace_delivery`, `trace_invoice`, `trace_customer`, `keyword_graph_lookup`.
-- Prefer a specific `operation` when the question asks to trace/track.
-- If the user provides an ID (order, delivery, invoice, customer, product), populate the corresponding *_id field.
-- Use `keywords` only as a fallback when you cannot extract a reliable ID.
+- Choose `operation` from: `trace_order`, `trace_delivery`, `trace_invoice`, `trace_customer`, 
+  `find_incomplete_orders`, `analyze_product_billing_volume`, `trace_billing_document_flow`, `keyword_graph_lookup`.
+- Use `trace_billing_document_flow` ONLY when:
+  * User asks to trace a specific billing document (invoice) through the entire flow
+  * User asks for "full flow" or "complete path" of an invoice
+  * User asks to trace: Sales Order → Delivery → Invoice → Payment/Journal Entry
+  * An invoice_id is available to trace
+- Use `find_incomplete_orders` for questions about:
+  * Incomplete orders
+  * Broken flows
+  * Missing invoices or payments
+  * Orders not delivered or not paid
+- Use `analyze_product_billing_volume` for questions about:
+  * Top products by invoices/billing volume
+  * Which products have most billing documents
+  * Product ranking by billing activity
+- If the user provides a specific ID (order, delivery, invoice, customer, product), populate the corresponding *_id field.
+- Use `keywords` only as a fallback when you cannot determine a specific operation.
 
 Schema:
 {{

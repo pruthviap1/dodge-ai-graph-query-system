@@ -570,6 +570,509 @@ class QueryService:
 
         return nodes, edges, debug
 
+    def _find_incomplete_orders(
+        self,
+        *,
+        node_cap: int = 500,
+        edge_cap: int = 2000,
+    ) -> tuple[list[GraphNode], list[GraphEdge], dict[str, Any]]:
+        """
+        Find orders with incomplete data flows:
+        - Delivery exists but no invoice
+        - Invoice exists but no delivery
+        - Invoice exists but no payment
+
+        Returns tuple of (nodes, edges, debug_info)
+        """
+        graph = self._graph_snapshot
+        if not graph:
+            return [], [], {"reason": "no_graph"}
+
+        # Maps to track relationships for each order
+        orders_with_deliveries: dict[str, set[str]] = {}  # order_id -> set of delivery_ids
+        orders_with_invoices: dict[str, set[str]] = {}    # order_id -> set of invoice_ids
+        invoices_with_payments: dict[str, set[str]] = {}  # invoice_id -> set of payment_ids
+
+        # First pass: collect all relationships
+        for edge in graph.edges:
+            if edge.type == "order_to_delivery":
+                from_id_parts = edge.from_id.split(":")
+                to_id_parts = edge.to_id.split(":")
+                if len(from_id_parts) >= 2 and len(to_id_parts) >= 2:
+                    order_id = from_id_parts[1]
+                    delivery_id = to_id_parts[1]
+                    orders_with_deliveries.setdefault(order_id, set()).add(delivery_id)
+
+            elif edge.type == "delivery_to_invoice":
+                to_id_parts = edge.to_id.split(":")
+                if len(to_id_parts) >= 2:
+                    invoice_id = to_id_parts[1]
+                    # Map back from delivery to order
+                    from_id_parts = edge.from_id.split(":")
+                    if len(from_id_parts) >= 2:
+                        delivery_id = from_id_parts[1]
+                        # Find which orders have this delivery
+                        for order_id, deliveries in orders_with_deliveries.items():
+                            if delivery_id in deliveries:
+                                orders_with_invoices.setdefault(order_id, set()).add(invoice_id)
+
+            elif edge.type == "invoice_to_payment":
+                from_id_parts = edge.from_id.split(":")
+                if len(from_id_parts) >= 2:
+                    invoice_id = from_id_parts[1]
+                    to_id_parts = edge.to_id.split(":")
+                    if len(to_id_parts) >= 2:
+                        payment_id = to_id_parts[1]
+                        invoices_with_payments.setdefault(invoice_id, set()).add(payment_id)
+
+        # Identify problematic orders and collect nodes/edges
+        problematic_nodes: set[str] = set()
+        problematic_edges: list[GraphEdge] = []
+        incomplete_cases: list[dict[str, Any]] = []
+
+        # Case 1: Delivery exists but no invoice
+        for order_id, delivery_ids in orders_with_deliveries.items():
+            invoice_ids = orders_with_invoices.get(order_id, set())
+            if delivery_ids and not invoice_ids:
+                # This order has deliveries but no invoices
+                case_nodes = {f"order:{order_id}"}
+                case_edges: list[GraphEdge] = []
+                
+                for delivery_id in list(delivery_ids)[:10]:  # Limit deliveries shown
+                    case_nodes.add(f"delivery:{delivery_id}")
+                    # Find the edges
+                    for edge in graph.edges:
+                        if (edge.from_id == f"order:{order_id}" and 
+                            edge.to_id == f"delivery:{delivery_id}" and 
+                            edge.type == "order_to_delivery"):
+                            case_edges.append(edge)
+                            break
+
+                problematic_nodes.update(case_nodes)
+                problematic_edges.extend(case_edges)
+                incomplete_cases.append({
+                    "case": "delivery_no_invoice",
+                    "order_id": order_id,
+                    "node_ids": list(case_nodes),
+                    "delivery_count": len(delivery_ids),
+                })
+
+        # Case 2: Invoice exists but no delivery
+        # This is detected when we have invoices but they don't trace back to deliveries
+        invoice_to_orders: dict[str, str] = {}  # invoice_id -> order_id
+        for edge in graph.edges:
+            if edge.type == "delivery_to_invoice":
+                to_id_parts = edge.to_id.split(":")
+                from_id_parts = edge.from_id.split(":")
+                if len(to_id_parts) >= 2 and len(from_id_parts) >= 2:
+                    invoice_id = to_id_parts[1]
+                    delivery_id = from_id_parts[1]
+                    # Find order for this delivery
+                    for edge2 in graph.edges:
+                        if (edge2.type == "order_to_delivery" and 
+                            edge2.to_id == f"delivery:{delivery_id}"):
+                            from_id_parts2 = edge2.from_id.split(":")
+                            if len(from_id_parts2) >= 2:
+                                order_id = from_id_parts2[1]
+                                invoice_to_orders[invoice_id] = order_id
+
+        # Find invoices that have no corresponding delivery (orphan invoices)
+        for edge in graph.edges:
+            if edge.type == "delivery_to_invoice":
+                to_id_parts = edge.to_id.split(":")
+                if len(to_id_parts) >= 2:
+                    invoice_id = to_id_parts[1]
+                    # Check if this invoice comes from a delivery
+                    from_id_parts = edge.from_id.split(":")
+                    if len(from_id_parts) >= 2:
+                        # This invoice HAS a delivery, so skip it
+                        continue
+
+        # Case 3: Invoice exists but no payment
+        unpaid_invoices: list[tuple[str, str]] = []  # (order_id, invoice_id)
+        for order_id, invoice_ids in orders_with_invoices.items():
+            for invoice_id in invoice_ids:
+                if invoice_id not in invoices_with_payments or not invoices_with_payments[invoice_id]:
+                    unpaid_invoices.append((order_id, invoice_id))
+
+        for order_id, invoice_id in unpaid_invoices[:20]:  # Limit to 20 cases
+            case_nodes = {f"order:{order_id}", f"invoice:{invoice_id}"}
+            case_edges: list[GraphEdge] = []
+            
+            # Find edges connecting order to delivery to invoice
+            for edge in graph.edges:
+                if (edge.type == "order_to_delivery" and 
+                    edge.from_id == f"order:{order_id}"):
+                    delivery_id = edge.to_id.split(":")[1]
+                    case_nodes.add(edge.to_id)
+                    case_edges.append(edge)
+                    
+                    # Find delivery to invoice edge
+                    for edge2 in graph.edges:
+                        if (edge2.type == "delivery_to_invoice" and 
+                            edge2.from_id == f"delivery:{delivery_id}" and 
+                            edge2.to_id == f"invoice:{invoice_id}"):
+                            case_nodes.add(f"delivery:{delivery_id}")
+                            case_edges.append(edge2)
+                            break
+                    break
+
+            problematic_nodes.update(case_nodes)
+            problematic_edges.extend(case_edges)
+            incomplete_cases.append({
+                "case": "invoice_no_payment",
+                "order_id": order_id,
+                "invoice_id": invoice_id,
+                "node_ids": list(case_nodes),
+            })
+
+        # Build final nodes list from collected node IDs
+        nodes = [self._node_by_id[nid] for nid in problematic_nodes if nid in self._node_by_id]
+        nodes = nodes[:node_cap]
+
+        # Enforce edge cap
+        if len(problematic_edges) > edge_cap:
+            problematic_edges = problematic_edges[:edge_cap]
+
+        debug = {
+            "total_incomplete_cases": len(incomplete_cases),
+            "delivery_no_invoice_count": sum(1 for c in incomplete_cases if c["case"] == "delivery_no_invoice"),
+            "invoice_no_payment_count": sum(1 for c in incomplete_cases if c["case"] == "invoice_no_payment"),
+            "incomplete_cases": incomplete_cases[:50],  # Return first 50 for analysis
+        }
+
+        return nodes, problematic_edges, debug
+
+    def _analyze_product_billing_volume(
+        self,
+        *,
+        node_cap: int = 200,
+        edge_cap: int = 2000,
+    ) -> tuple[list[GraphNode], list[GraphEdge], dict[str, Any]]:
+        """
+        Analyze products by their billing document (invoice) count.
+        Traverses: Product <- Order -> Delivery -> Invoice
+        Groups by product and counts total invoices per product.
+        Returns: Top products sorted by invoice volume, with subgraph.
+        """
+        graph = self._graph_snapshot
+        if not graph:
+            return [], [], {"reason": "no_graph", "message": "No billing data available"}
+
+        # Build reverse index: product -> orders
+        product_to_orders: dict[str, set[str]] = {}  # "product:id" -> set("order:id")
+        order_to_deliveries: dict[str, set[str]] = {}  # "order:id" -> set("delivery:id")
+        delivery_to_invoices: dict[str, set[str]] = {}  # "delivery:id" -> set("invoice:id")
+
+        # Phase 1: Index all edges
+        for edge in graph.edges:
+            if edge.type == "order_to_product":
+                # Reverse: product gains order
+                product_id = edge.to_id  # product is the target
+                order_id = edge.from_id   # order is the source
+                product_to_orders.setdefault(product_id, set()).add(order_id)
+
+            elif edge.type == "order_to_delivery":
+                order_id = edge.from_id
+                delivery_id = edge.to_id
+                order_to_deliveries.setdefault(order_id, set()).add(delivery_id)
+
+            elif edge.type == "delivery_to_invoice":
+                delivery_id = edge.from_id
+                invoice_id = edge.to_id
+                delivery_to_invoices.setdefault(delivery_id, set()).add(invoice_id)
+
+        # Phase 2: Aggregate invoice counts per product
+        product_invoice_counts: dict[str, dict[str, Any]] = {}  # product_id -> {count, invoices, orders_sample}
+
+        for product_node_id, orders in product_to_orders.items():
+            invoice_set: set[str] = set()
+            orders_with_invoices: list[str] = []
+            sample_deliveries: list[str] = []
+
+            for order_id in orders:
+                deliveries = order_to_deliveries.get(order_id, set())
+                if deliveries:
+                    orders_with_invoices.append(order_id)
+                    for delivery_id in deliveries:
+                        invoices = delivery_to_invoices.get(delivery_id, set())
+                        if invoices:
+                            invoice_set.update(invoices)
+                            sample_deliveries.append(delivery_id)
+
+            count = len(invoice_set)
+            if count > 0:
+                product_invoice_counts[product_node_id] = {
+                    "count": count,
+                    "invoices": sorted(list(invoice_set))[:100],  # Limit to 100 for processing
+                    "orders_with_invoices": len(orders_with_invoices),
+                    "orders_sample": sorted(list(orders_with_invoices))[:5],
+                    "deliveries_sample": sorted(list(set(sample_deliveries)))[:5],
+                }
+
+        # Phase 3: Sort by invoice count (descending)
+        if not product_invoice_counts:
+            return [], [], {
+                "reason": "no_data",
+                "message": "No billing data available",
+                "product_invoice_counts": {},
+            }
+
+        sorted_products = sorted(
+            product_invoice_counts.items(),
+            key=lambda x: x[1]["count"],
+            reverse=True,
+        )
+
+        # Phase 4: Build subgraph for top products (limit to avoid explosion)
+        nodes_set: set[str] = set()
+        edges_list: list[GraphEdge] = []
+
+        # Include top 5 products
+        top_products = sorted_products[:5]
+        for product_node_id, stats in top_products:
+            nodes_set.add(product_node_id)
+            # Add sample orders
+            for order_id in stats["orders_sample"]:
+                nodes_set.add(order_id)
+                # Find order->product edge
+                for edge in graph.edges:
+                    if (edge.type == "order_to_product" and 
+                        edge.from_id == order_id and 
+                        edge.to_id == product_node_id):
+                        edges_list.append(edge)
+                        break
+                # Add sample deliveries
+                for delivery_id in stats["deliveries_sample"]:
+                    if delivery_id in order_to_deliveries.get(order_id, set()):
+                        nodes_set.add(delivery_id)
+                        # Add order->delivery edge
+                        for edge in graph.edges:
+                            if (edge.type == "order_to_delivery" and 
+                                edge.from_id == order_id and 
+                                edge.to_id == delivery_id):
+                                edges_list.append(edge)
+                                break
+                        # Add sample invoices for this delivery
+                        invoices = delivery_to_invoices.get(delivery_id, set())
+                        for invoice_id in list(invoices)[:3]:  # Show 3 sample invoices max per delivery
+                            nodes_set.add(invoice_id)
+                            # Add delivery->invoice edge
+                            for edge in graph.edges:
+                                if (edge.type == "delivery_to_invoice" and 
+                                    edge.from_id == delivery_id and 
+                                    edge.to_id == invoice_id):
+                                    edges_list.append(edge)
+                                    break
+
+        # Phase 5: Build output nodes and enforce caps
+        nodes = [self._node_by_id[nid] for nid in nodes_set if nid in self._node_by_id]
+        nodes = nodes[:min(len(nodes), node_cap)]
+
+        if len(edges_list) > edge_cap:
+            edges_list = edges_list[:edge_cap]
+
+        # Phase 6: Prepare debug info
+        debug = {
+            "total_products_with_billing": len(product_invoice_counts),
+            "top_products": [
+                {
+                    "product_node_id": prod_id,
+                    "product_name": self._node_by_id.get(prod_id, GraphNode(id="", type="", label="")).label,
+                    "invoice_count": stats["count"],
+                    "orders_count": stats["orders_with_invoices"],
+                    "top_invoices": stats["invoices"][:10],
+                }
+                for prod_id, stats in sorted_products[:10]
+            ],
+            "highest_invoice_count": sorted_products[0][1]["count"] if sorted_products else 0,
+            "highest_product_id": sorted_products[0][0] if sorted_products else None,
+        }
+
+        return nodes, edges_list, debug
+
+    def _trace_billing_document_flow(
+        self,
+        invoice_id: str,
+    ) -> tuple[list[GraphNode], list[GraphEdge], dict[str, Any]]:
+        """
+        Trace the complete flow of a specific billing document (invoice):
+        Sales Order → Delivery → Invoice → Payment (Journal Entry)
+
+        Returns: (nodes, edges, debug_info) with structured path information
+        """
+        graph = self._graph_snapshot
+        if not graph:
+            return [], [], {"reason": "no_graph", "path": []}
+
+        # Check if invoice exists
+        invoice_node_id = f"invoice:{invoice_id}"
+        if invoice_node_id not in self._node_by_id:
+            return [], [], {
+                "reason": "invoice_not_found",
+                "invoice_id": invoice_id,
+                "path": [],
+                "status": "FAILED - Invoice not found",
+            }
+
+        invoice_node = self._node_by_id[invoice_node_id]
+        path_items: list[dict[str, Any]] = [
+            {
+                "step": 1,
+                "node_type": "invoice",
+                "node_id": invoice_id,
+                "node_label": invoice_node.label,
+                "status": "FOUND ✓",
+            }
+        ]
+
+        # Step 2: Find Delivery → Invoice edges (incoming)
+        delivery_ids: list[str] = []
+        delivery_invoice_edges: list[GraphEdge] = []
+
+        for edge in graph.edges:
+            if (edge.type == "delivery_to_invoice" and 
+                edge.to_id == invoice_node_id):
+                from_id_parts = edge.from_id.split(":")
+                if len(from_id_parts) >= 2:
+                    delivery_id = from_id_parts[1]
+                    delivery_ids.append(delivery_id)
+                    delivery_invoice_edges.append(edge)
+
+        if delivery_ids:
+            delivery_id = delivery_ids[0]  # Take first (usually only one per invoice)
+            path_items.append({
+                "step": 2,
+                "node_type": "delivery",
+                "node_id": delivery_id,
+                "node_label": self._node_by_id.get(f"delivery:{delivery_id}", GraphNode(id="", type="", label="")).label,
+                "edge_type": "delivery_to_invoice",
+                "status": f"FOUND ✓ ({len(delivery_ids)} delivery(ies))",
+            })
+        else:
+            path_items.append({
+                "step": 2,
+                "node_type": "delivery",
+                "node_id": None,
+                "status": "MISSING ✗ - No delivery linked to this invoice",
+            })
+
+        # Step 3: Find Order → Delivery edges (incoming)
+        order_ids: list[str] = []
+        order_delivery_edges: list[GraphEdge] = []
+
+        if delivery_ids:
+            delivery_node_id = f"delivery:{delivery_ids[0]}"
+            for edge in graph.edges:
+                if (edge.type == "order_to_delivery" and 
+                    edge.to_id == delivery_node_id):
+                    from_id_parts = edge.from_id.split(":")
+                    if len(from_id_parts) >= 2:
+                        order_id = from_id_parts[1]
+                        order_ids.append(order_id)
+                        order_delivery_edges.append(edge)
+
+        if order_ids:
+            order_id = order_ids[0]  # Take first
+            path_items.append({
+                "step": 3,
+                "node_type": "order",
+                "node_id": order_id,
+                "node_label": self._node_by_id.get(f"order:{order_id}", GraphNode(id="", type="", label="")).label,
+                "edge_type": "order_to_delivery",
+                "status": f"FOUND ✓ ({len(order_ids)} order(s))",
+            })
+        else:
+            path_items.append({
+                "step": 3,
+                "node_type": "order",
+                "node_id": None,
+                "status": "MISSING ✗ - No order linked to delivery",
+            })
+
+        # Step 4: Find Invoice → Payment/Journal Entry (outgoing)
+        payment_ids: list[str] = []
+        invoice_payment_edges: list[GraphEdge] = []
+
+        for edge in graph.edges:
+            if (edge.type == "invoice_to_payment" and 
+                edge.from_id == invoice_node_id):
+                to_id_parts = edge.to_id.split(":")
+                if len(to_id_parts) >= 2:
+                    payment_id = to_id_parts[1]
+                    payment_ids.append(payment_id)
+                    invoice_payment_edges.append(edge)
+
+        if payment_ids:
+            payment_id = payment_ids[0]  # Take first
+            payment_node = self._node_by_id.get(f"payment:{payment_id}")
+            path_items.append({
+                "step": 4,
+                "node_type": "payment/journal_entry",
+                "node_id": payment_id,
+                "node_label": payment_node.label if payment_node else payment_id,
+                "edge_type": "invoice_to_payment",
+                "journal_entry_count": len(payment_ids),
+                "status": f"FOUND ✓ ({len(payment_ids)} payment(s)/journal entry(ies))",
+            })
+        else:
+            path_items.append({
+                "step": 4,
+                "node_type": "payment/journal_entry",
+                "node_id": None,
+                "status": "MISSING ✗ - No payment/journal entry linked to invoice",
+            })
+
+        # Build minimal subgraph for visualization
+        nodes_set: set[str] = {invoice_node_id}
+        edges_list: list[GraphEdge] = []
+
+        # Add delivery if found
+        if delivery_ids:
+            delivery_node_id = f"delivery:{delivery_ids[0]}"
+            nodes_set.add(delivery_node_id)
+            edges_list.extend(delivery_invoice_edges)
+
+        # Add order if found
+        if order_ids:
+            order_node_id = f"order:{order_ids[0]}"
+            nodes_set.add(order_node_id)
+            edges_list.extend(order_delivery_edges)
+
+        # Add payment if found
+        if payment_ids:
+            payment_node_id = f"payment:{payment_ids[0]}"
+            nodes_set.add(payment_node_id)
+            edges_list.extend(invoice_payment_edges)
+
+        # Build nodes list
+        nodes = [self._node_by_id[nid] for nid in nodes_set if nid in self._node_by_id]
+
+        # Determine overall status
+        all_steps_complete = (len(order_ids) > 0 and 
+                            len(delivery_ids) > 0 and 
+                            len(payment_ids) > 0)
+        overall_status = "COMPLETE ✓" if all_steps_complete else "INCOMPLETE ⚠ (Missing links)"
+
+        # Build debug info
+        debug = {
+            "invoice_id": invoice_id,
+            "path": path_items,
+            "overall_status": overall_status,
+            "order_found": len(order_ids) > 0,
+            "delivery_found": len(delivery_ids) > 0,
+            "payment_found": len(payment_ids) > 0,
+            "order_id": order_ids[0] if order_ids else None,
+            "delivery_id": delivery_ids[0] if delivery_ids else None,
+            "payment_id": payment_ids[0] if payment_ids else None,
+            "missing_steps": [
+                item["node_type"] for item in path_items 
+                if item.get("status") and "MISSING" in item["status"]
+            ],
+        }
+
+        return nodes, edges_list, debug
+
     def answer_question(self, req: GraphQueryRequest) -> GraphQueryResponse:
         if self._graph_snapshot is None:
             # Build automatically for first run.
@@ -738,6 +1241,201 @@ class QueryService:
                 cur = dbg.get("payment_currency")
                 cur_part = f" {cur}" if cur else ""
                 answer_lines.append(f"- Payment total (sum): {_fmt_float(dbg.get('payment_amount_total', 0.0))}{cur_part}")
+
+            return GraphQueryResponse(
+                answer="\n".join(answer_lines),
+                structured_query=structured_query,
+                graph=GraphSnapshot(nodes=nodes, edges=edges),
+                debug={"gemini_raw": gemini_raw, **dbg},
+            )
+
+        if structured_query.operation == "find_incomplete_orders":
+            nodes, edges, dbg = self._find_incomplete_orders(
+                node_cap=min(req.limit, 300),
+                edge_cap=5000,
+            )
+
+            if not nodes:
+                return GraphQueryResponse(
+                    answer="No incomplete orders found in the graph.",
+                    structured_query=structured_query,
+                    graph=GraphSnapshot(nodes=[], edges=[]),
+                    debug={"gemini_raw": gemini_raw, **dbg},
+                )
+
+            incomplete_cases = dbg.get("incomplete_cases", [])
+            total = dbg.get("total_incomplete_cases", 0)
+            delivery_no_inv = dbg.get("delivery_no_invoice_count", 0)
+            invoice_no_pay = dbg.get("invoice_no_payment_count", 0)
+
+            # Build detailed answer
+            answer_lines = [
+                f"Found {total} incomplete orders:",
+                "",
+                f"1. Delivery exists but no invoice: {delivery_no_inv} case(s)",
+                f"   - Orders have been delivered but not yet invoiced",
+                "",
+                f"2. Invoice exists but no payment: {invoice_no_pay} case(s)",
+                f"   - Invoices have been issued but not yet paid",
+                "",
+                "Sample cases:",
+            ]
+
+            # Add sample cases
+            samples_shown = 0
+            for case in incomplete_cases[:10]:
+                case_type = case.get("case")
+                order_id = case.get("order_id")
+                if case_type == "delivery_no_invoice":
+                    delivery_count = case.get("delivery_count", 0)
+                    answer_lines.append(f"  • Order {order_id}: {delivery_count} delivery(ies), no invoice")
+                    samples_shown += 1
+                elif case_type == "invoice_no_payment":
+                    invoice_id = case.get("invoice_id")
+                    answer_lines.append(f"  • Order {order_id}: Invoice {invoice_id}, no payment")
+                    samples_shown += 1
+
+            return GraphQueryResponse(
+                answer="\n".join(answer_lines),
+                structured_query=structured_query,
+                graph=GraphSnapshot(nodes=nodes, edges=edges),
+                debug={"gemini_raw": gemini_raw, **dbg},
+            )
+
+        if structured_query.operation == "analyze_product_billing_volume":
+            nodes, edges, dbg = self._analyze_product_billing_volume(
+                node_cap=min(req.limit, 200),
+                edge_cap=5000,
+            )
+
+            # Check for no data scenario
+            if dbg.get("reason") == "no_data":
+                return GraphQueryResponse(
+                    answer="No billing data available. No products have associated invoices (billing documents).",
+                    structured_query=structured_query,
+                    graph=GraphSnapshot(nodes=[], edges=[]),
+                    debug={"gemini_raw": gemini_raw, **dbg},
+                )
+
+            if not nodes:
+                return GraphQueryResponse(
+                    answer="No billing data available. Make sure the graph has been built and contains invoices.",
+                    structured_query=structured_query,
+                    graph=GraphSnapshot(nodes=[], edges=[]),
+                    debug={"gemini_raw": gemini_raw, **dbg},
+                )
+
+            top_products = dbg.get("top_products", [])
+            total_products = dbg.get("total_products_with_billing", 0)
+            highest_count = dbg.get("highest_invoice_count", 0)
+
+            # Build detailed answer
+            answer_lines = [
+                f"Product Billing Volume Analysis:",
+                f"Total products with billing documents: {total_products}",
+                "",
+            ]
+
+            if top_products:
+                answer_lines.append(f"Top products by invoice count:")
+                for idx, prod in enumerate(top_products[:5], 1):
+                    product_name = prod.get("product_name") or prod.get("product_node_id", "Unknown")
+                    invoice_count = prod.get("invoice_count", 0)
+                    orders_count = prod.get("orders_count", 0)
+                    answer_lines.append(
+                        f"{idx}. Product: {product_name}"
+                    )
+                    answer_lines.append(
+                        f"   Billing Documents (Invoices): {invoice_count}"
+                    )
+                    answer_lines.append(
+                        f"   Associated Orders: {orders_count}"
+                    )
+                    answer_lines.append("")
+
+                # Highlight the winner
+                winner = top_products[0]
+                answer_lines.insert(
+                    2,
+                    f"🏆 Highest: '{winner.get('product_name') or winner.get('product_node_id')}' with {winner.get('invoice_count', 0)} billing documents\n"
+                )
+
+            return GraphQueryResponse(
+                answer="\n".join(answer_lines),
+                structured_query=structured_query,
+                graph=GraphSnapshot(nodes=nodes, edges=edges),
+                debug={"gemini_raw": gemini_raw, **dbg},
+            )
+
+        if structured_query.operation == "trace_billing_document_flow":
+            # If no invoice_id provided, pick a sample one from the graph
+            invoice_id_to_use = structured_query.invoice_id
+            if not invoice_id_to_use:
+                # Pick first available invoice as sample
+                for node_id in self._node_by_id:
+                    if node_id.startswith("invoice:"):
+                        invoice_id_to_use = node_id.split(":", 1)[1]  # Extract ID after "invoice:"
+                        break
+            
+            if not invoice_id_to_use:
+                return GraphQueryResponse(
+                    answer="No invoices found in the graph to trace.",
+                    structured_query=structured_query,
+                    graph=GraphSnapshot(nodes=[], edges=[]),
+                    debug={"gemini_raw": gemini_raw, "error": "no_invoices"},
+                )
+            
+            nodes, edges, dbg = self._trace_billing_document_flow(invoice_id_to_use)
+
+            if dbg.get("reason") == "invoice_not_found":
+                return GraphQueryResponse(
+                    answer=f"Invoice {invoice_id_to_use} was not found in the graph.",
+                    structured_query=structured_query,
+                    graph=GraphSnapshot(nodes=[], edges=[]),
+                    debug={"gemini_raw": gemini_raw, **dbg},
+                )
+
+            # Build structured path output
+            path_items = dbg.get("path", [])
+            overall_status = dbg.get("overall_status", "UNKNOWN")
+            missing_steps = dbg.get("missing_steps", [])
+
+            answer_lines = [
+                "📋 BILLING DOCUMENT FLOW TRACE",
+                f"Invoice ID: {invoice_id_to_use}",
+                f"Overall Status: {overall_status}",
+                "",
+                "Document Flow Path:",
+                "─" * 50,
+            ]
+
+            # Add each step with status
+            for item in path_items:
+                step = item.get("step")
+                node_type = item.get("node_type")
+                node_id = item.get("node_id")
+                status = item.get("status", "UNKNOWN")
+                node_label = item.get("node_label", node_id)
+
+                if node_id:
+                    answer_lines.append(f"\n{step}. {node_type.upper()}")
+                    answer_lines.append(f"   ID: {node_id}")
+                    answer_lines.append(f"   Label: {node_label}")
+                    answer_lines.append(f"   Status: {status}")
+                else:
+                    answer_lines.append(f"\n{step}. {node_type.upper()}")
+                    answer_lines.append(f"   Status: {status}")
+
+            answer_lines.append("\n" + "─" * 50)
+
+            # Provide clear summary
+            if overall_status.startswith("COMPLETE"):
+                answer_lines.append("\n✓ SUCCESS: Full document flow traced")
+                answer_lines.append("All nodes from Sales Order → Delivery → Invoice → Payment found")
+            else:
+                answer_lines.append(f"\n⚠ INCOMPLETE: Missing {len(missing_steps)} step(s)")
+                for missing in missing_steps:
+                    answer_lines.append(f"  • {missing.upper()}")
 
             return GraphQueryResponse(
                 answer="\n".join(answer_lines),

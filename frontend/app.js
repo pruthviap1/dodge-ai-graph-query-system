@@ -31,7 +31,30 @@ function stringifyShort(obj) {
 function buildVisGraph(snapshot) {
   const nodes = (snapshot.nodes || []).map((n) => {
     const label = n.label || n.id;
-    return { id: n.id, label: label, title: label, group: n.type };
+    const colors = {
+      order: "#3b82f6",
+      delivery: "#9333ea",
+      invoice: "#0891b2",
+      payment: "#059669",
+      customer: "#d97706",
+      product: "#db2777",
+    };
+    const color = colors[n.type] || "#3b82f6";
+
+    return {
+      id: n.id,
+      label: label,
+      title: label,
+      group: n.type,
+      color: {
+        background: color,
+        border: color,
+        highlight: { background: color, border: color },
+      },
+      font: { size: 14, color: "#000", face: "Arial" },
+      borderWidth: 2,
+      borderWidthSelected: 3,
+    };
   });
 
   const edges = (snapshot.edges || []).map((e) => {
@@ -40,6 +63,8 @@ function buildVisGraph(snapshot) {
       to: e.to_id,
       label: e.label || e.type || "",
       arrows: "to",
+      color: { color: "rgba(59, 130, 246, 0.8)", highlight: "rgba(59, 130, 246, 1)" },
+      font: { size: 12, color: "#333" },
     };
   });
 
@@ -52,15 +77,21 @@ function buildVisGraph(snapshot) {
   const options = {
     physics: { stabilization: false },
     interaction: { hover: true },
-    nodes: { shape: "dot", size: 10 },
+    nodes: { shape: "dot", size: 25 },
     edges: { color: { inherit: true }, font: { size: 10 } },
   };
 
-  // Create/replace network each time (starter simplicity).
-  return new vis.Network(container, data, options);
-}
+  // Destroy previous network if exists
+  let network = null;
+  if (window.currentNetwork) {
+    window.currentNetwork.destroy();
+  }
 
-let network = null;
+  network = new vis.Network(container, data, options);
+  window.currentNetwork = network;
+  
+  return network;
+}
 
 async function ask(question) {
   const backendUrl = backendUrlEl.value.trim() || DEFAULT_BACKEND_URL;
@@ -93,22 +124,19 @@ chatFormEl.addEventListener("submit", async (e) => {
     const data = await ask(question);
     answerEl.textContent = data.answer || "";
 
-    // Clear debug by default to keep UI minimal/clean.
     debugEl.textContent = "";
 
     const graph = data.graph || { nodes: [], edges: [] };
     const nodeCount = (graph.nodes || []).length;
     const edgeCount = (graph.edges || []).length;
 
-    // Guardrail case: empty graph -> do not render network.
     if (nodeCount === 0 && edgeCount === 0) {
-      if (network) network.destroy();
-      network = null;
+      if (window.currentNetwork) window.currentNetwork.destroy();
+      window.currentNetwork = null;
       return;
     }
 
-    if (network) network.destroy();
-    network = buildVisGraph(graph);
+    buildVisGraph(graph);
   } catch (err) {
     answerEl.textContent = "";
     debugEl.textContent = String(err && err.message ? err.message : err);

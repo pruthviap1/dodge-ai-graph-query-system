@@ -37,7 +37,9 @@ class StructuredGraphQuery(BaseModel):
         default="keyword_graph_lookup",
         description=(
             "High-level operation to execute. Examples: "
-            "`trace_order`, `trace_delivery`, `trace_invoice`, `keyword_graph_lookup`."
+            "`trace_order`, `trace_delivery`, `trace_invoice`, `trace_customer`, "
+            "`find_incomplete_orders`, `analyze_product_billing_volume`, "
+            "`trace_billing_document_flow`, `keyword_graph_lookup`."
         ),
     )
 
