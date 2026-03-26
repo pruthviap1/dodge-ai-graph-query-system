@@ -92,15 +92,154 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def show_graph(graph):
-    net = Network(height="500px", width="100%", directed=True)
+    net = Network(
+        height="500px", 
+        width="100%", 
+        directed=True,
+        bgcolor="#f8f9fa",
+        font_color="#333333"
+    )
+    
+    # Modern styling options
+    net.set_options("""
+    {
+      "physics": {
+        "barnesHut": {
+          "gravitationalConstant": -8000,
+          "centralGravity": 0.3,
+          "springLength": 95,
+          "springConstant": 0.04,
+          "damping": 0.09,
+          "avoidOverlap": 0.1
+        },
+        "maxVelocity": 50,
+        "minVelocity": 0.1,
+        "solver": "barnesHut",
+        "timestep": 0.5,
+        "stabilization": {
+          "enabled": true,
+          "iterations": 1000,
+          "updateInterval": 25
+        }
+      },
+      "nodes": {
+        "borderWidth": 2,
+        "borderWidthSelected": 4,
+        "color": {
+          "border": "#667eea",
+          "background": "#ffffff",
+          "highlight": {
+            "border": "#764ba2",
+            "background": "#e8f4fd"
+          },
+          "hover": {
+            "border": "#764ba2",
+            "background": "#f0f8ff"
+          }
+        },
+        "font": {
+          "color": "#333333",
+          "size": 14,
+          "face": "arial",
+          "background": "rgba(255, 255, 255, 0.8)",
+          "strokeWidth": 0
+        },
+        "shape": "dot",
+        "size": 20,
+        "shadow": {
+          "enabled": true,
+          "color": "rgba(0,0,0,0.2)",
+          "size": 5,
+          "x": 2,
+          "y": 2
+        }
+      },
+      "edges": {
+        "color": {
+          "color": "#667eea",
+          "highlight": "#764ba2",
+          "hover": "#764ba2",
+          "inherit": false,
+          "opacity": 0.8
+        },
+        "font": {
+          "color": "#333333",
+          "size": 12,
+          "face": "arial",
+          "background": "rgba(255, 255, 255, 0.8)",
+          "strokeWidth": 0,
+          "align": "middle"
+        },
+        "arrows": {
+          "to": {
+            "enabled": true,
+            "scaleFactor": 0.8,
+            "type": "arrow"
+          }
+        },
+        "smooth": {
+          "enabled": true,
+          "type": "dynamic",
+          "roundness": 0.5
+        },
+        "shadow": {
+          "enabled": true,
+          "color": "rgba(0,0,0,0.1)",
+          "size": 3,
+          "x": 1,
+          "y": 1
+        },
+        "width": 2
+      },
+      "interaction": {
+        "dragNodes": true,
+        "dragView": true,
+        "hideEdgesOnDrag": false,
+        "hideEdgesOnZoom": false,
+        "hideNodesOnDrag": false,
+        "hover": true,
+        "hoverConnectedEdges": true,
+        "keyboard": {
+          "enabled": true,
+          "speed": {
+            "x": 10,
+            "y": 10,
+            "zoom": 0.02
+          },
+          "bindToWindow": true
+        },
+        "multiselect": true,
+        "navigationButtons": true,
+        "selectable": true,
+        "selectConnectedEdges": true,
+        "tooltipDelay": 300,
+        "zoomView": true
+      },
+      "manipulation": {
+        "enabled": false
+      }
+    }
+    """)
 
-    # Add nodes
-    for node in graph["nodes"]:
-        net.add_node(node["id"], label=node["label"])
+    # Add nodes with modern colors
+    node_colors = ["#667eea", "#764ba2", "#f093fb", "#f5576c", "#4facfe", "#00f2fe", "#43e97b", "#38f9d7"]
+    for i, node in enumerate(graph["nodes"]):
+        color = node_colors[i % len(node_colors)]
+        net.add_node(
+            node["id"], 
+            label=node.get("label", node["id"]),
+            color=color,
+            title=f"ID: {node['id']}\nType: {node.get('type', 'Unknown')}"
+        )
 
-    # Add edges
+    # Add edges with labels
     for edge in graph["edges"]:
-        net.add_edge(edge["from_id"], edge["to_id"], label=edge["type"])
+        net.add_edge(
+            edge["from_id"], 
+            edge["to_id"], 
+            label=edge.get("type", ""),
+            title=f"From: {edge['from_id']}\nTo: {edge['to_id']}\nType: {edge.get('type', '')}"
+        )
 
     net.save_graph("graph.html")
 
