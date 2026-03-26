@@ -66,3 +66,10 @@ def query(req: GraphQueryRequest) -> GraphQueryResponse:
     )
     return resp
 
+
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+frontend_path = Path(__file__).resolve().parents[2] / "frontend"
+app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
