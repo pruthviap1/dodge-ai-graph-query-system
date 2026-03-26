@@ -302,73 +302,68 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Main dashboard layout
-col1, col2 = st.columns([7, 3])
+# AI Assistant at top
+st.markdown('<div class="chat-card" style="margin-bottom: 2rem;">', unsafe_allow_html=True)
+st.markdown('<div class="card-title"><span class="card-icon">💬</span>AI Assistant</div>', unsafe_allow_html=True)
 
-# Left column: Graph visualization
-with col1:
-    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title"><span class="card-icon">📊</span>Graph View</div>', unsafe_allow_html=True)
-    
-    if st.session_state.current_graph:
-        show_graph(st.session_state.current_graph)
-    else:
-        st.info("💡 Submit a query to visualize the graph")
-    
+# Chat messages container
+chat_container = st.container()
+with chat_container:
+    st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.markdown(f'<div class="message user-message"><span class="message-icon">👤</span>{message["content"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="message ai-message"><span class="message-icon">🤖</span>{message["content"]}</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Right column: Chat interface
-with col2:
-    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title"><span class="card-icon">💬</span>AI Assistant</div>', unsafe_allow_html=True)
+# Input section
+st.markdown('<div class="input-container">', unsafe_allow_html=True)
+with st.form(key="query_form", clear_on_submit=True):
+    question = st.text_input("Ask your query...", placeholder="e.g., Show me orders for customer ABC123", label_visibility="collapsed")
+    submit_button = st.form_submit_button(
+        "🚀 Send Query", 
+        use_container_width=True,
+        disabled=st.session_state.processing
+    )
+
+if submit_button and question.strip() and not st.session_state.processing:
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": question})
     
-    # Chat messages container
-    chat_container = st.container()
-    with chat_container:
-        st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
-        for message in st.session_state.messages:
-            if message["role"] == "user":
-                st.markdown(f'<div class="message user-message"><span class="message-icon">👤</span>{message["content"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="message ai-message"><span class="message-icon">🤖</span>{message["content"]}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Set processing state
+    st.session_state.processing = True
     
-    # Input section
-    st.markdown('<div class="input-container">', unsafe_allow_html=True)
-    with st.form(key="query_form", clear_on_submit=True):
-        question = st.text_input("Ask your query...", placeholder="e.g., Show me orders for customer ABC123", label_visibility="collapsed")
-        submit_button = st.form_submit_button(
-            "🚀 Send Query", 
-            use_container_width=True,
-            disabled=st.session_state.processing
-        )
+    with st.spinner("🔄 Analyzing your query..."):
+        try:
+            result = process_query(question)
+            
+            # Add AI response
+            st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
+            
+            # Update graph
+            st.session_state.current_graph = result["graph"]
+            
+            # Rerun to update UI
+            st.rerun()
+            
+        except Exception as e:
+            st.session_state.messages.append({"role": "assistant", "content": f"❌ Error: {str(e)}"})
+            st.rerun()
     
-    if submit_button and question.strip() and not st.session_state.processing:
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": question})
-        
-        # Set processing state
-        st.session_state.processing = True
-        
-        with st.spinner("🔄 Analyzing your query..."):
-            try:
-                result = process_query(question)
-                
-                # Add AI response
-                st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
-                
-                # Update graph
-                st.session_state.current_graph = result["graph"]
-                
-                # Rerun to update UI
-                st.rerun()
-                
-            except Exception as e:
-                st.session_state.messages.append({"role": "assistant", "content": f"❌ Error: {str(e)}"})
-                st.rerun()
-        
-        # Reset processing state
-        st.session_state.processing = False
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Reset processing state
+    st.session_state.processing = False
+
+st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Graph visualization below
+st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+st.markdown('<div class="card-title"><span class="card-icon">📊</span>Graph View</div>', unsafe_allow_html=True)
+
+if st.session_state.current_graph:
+    show_graph(st.session_state.current_graph)
+else:
+    st.info("💡 Submit a query to visualize the graph")
+
+st.markdown('</div>', unsafe_allow_html=True)
