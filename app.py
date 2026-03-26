@@ -110,8 +110,9 @@ def show_graph(graph):
 # Header
 st.markdown("""
 <div class="main-header">
-    <div class="main-title">🔍 AI Graph Query System</div>
-    <div class="subtitle">Explore your business data with intelligent graph queries</div>
+    <div style="font-size: 1.5rem; opacity: 0.8; margin-bottom: 0.5rem;">🚀 Dodge AI</div>
+    <div class="main-title">🔍 Graph Query System</div>
+    <div class="subtitle">Next-gen AI-powered business intelligence for enterprise data exploration</div>
 </div>
 """, unsafe_allow_html=True)
 
