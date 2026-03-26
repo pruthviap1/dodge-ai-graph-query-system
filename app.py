@@ -6,6 +6,49 @@ import streamlit.components.v1 as components
 # Modern CSS styling
 st.markdown("""
 <style>
+    .company-header {
+        text-align: center;
+        padding: 2rem 0;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        color: white;
+        border-radius: 20px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+    .company-header::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%);
+        animation: shimmer 3s infinite;
+    }
+    @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    .company-name {
+        font-size: 3.5rem;
+        font-weight: 900;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        background: linear-gradient(135deg, #00d4ff 0%, #090979 50%, #ff6b6b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+    }
+    .company-tagline {
+        font-size: 1.2rem;
+        opacity: 0.9;
+        font-weight: 300;
+        letter-spacing: 1px;
+    }
     .main-title {
         text-align: center;
         font-size: 2.5rem;
@@ -98,6 +141,13 @@ def show_graph(graph):
 
     HtmlFile = open("graph.html", "r", encoding="utf-8")
     components.html(HtmlFile.read(), height=500)
+
+st.markdown("""
+<div class="company-header">
+    <div class="company-name">DODGE AI</div>
+    <div class="company-tagline">Next-Generation Business Intelligence</div>
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">🔍 AI Graph Query System</div>', unsafe_allow_html=True)
 
