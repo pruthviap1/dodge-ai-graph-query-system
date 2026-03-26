@@ -45,7 +45,7 @@ st.markdown("""
         padding: 1.5rem;
         border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        height: 600px;
+        min-height: 300px;
         display: flex;
         flex-direction: column;
     }
