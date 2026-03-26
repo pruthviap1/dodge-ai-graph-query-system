@@ -6,4 +6,5 @@ python-dotenv
 networkx
 google-generativeai
 requests
+pyvis
 
