@@ -1557,6 +1557,6 @@ def process_query(question: str) -> dict:
     resp = service.answer_question(req)
     return {
         "answer": resp.answer,
-        "graph": resp.graph.model_dump() if resp.graph else {"nodes": [], "edges": []}
+        "graph": resp.graph.dict() if resp.graph else {"nodes": [], "edges": []}
     }
 

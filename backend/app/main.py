@@ -45,7 +45,7 @@ def get_graph_snapshot() -> Any:
     # Not typed: the UI only needs a graph-like JSON with nodes/edges.
     if service.graph_snapshot is None:
         return {"nodes": [], "edges": []}
-    return service.graph_snapshot.model_dump()
+    return service.graph_snapshot.dict()
 
 
 @app.post("/api/query", response_model=GraphQueryResponse)
@@ -62,7 +62,7 @@ def query(req: GraphQueryRequest) -> GraphQueryResponse:
         question=req.question,
         gemini_raw=gemini_raw,
         answer=resp.answer,
-        structured_query=resp.structured_query.model_dump(),
+        structured_query=resp.structured_query.dict(),
     )
     return resp
 
