@@ -11,12 +11,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for modern styling
+# Custom CSS for modern dashboard styling
 st.markdown("""
 <style>
     .main-header {
         text-align: center;
-        padding: 2rem 0;
+        padding: 1.5rem 0;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border-radius: 15px;
@@ -24,37 +24,66 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
     .main-title {
-        font-size: 3rem;
+        font-size: 2.5rem;
         font-weight: bold;
         margin-bottom: 0.5rem;
     }
     .subtitle {
-        font-size: 1.2rem;
+        font-size: 1.1rem;
         opacity: 0.9;
     }
-    .input-container {
-        background: white;
-        padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 2rem;
-    }
-    .result-card {
+    .dashboard-card {
         background: white;
         padding: 1.5rem;
         border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 1.5rem;
-    }
-    .section-header {
-        font-size: 1.5rem;
-        font-weight: bold;
         margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
+        height: 100%;
     }
-    .section-icon {
+    .chat-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        height: 600px;
+        display: flex;
+        flex-direction: column;
+    }
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        margin-bottom: 1rem;
+        padding: 1rem;
+        background: #f8f9fa;
+        border-radius: 10px;
+        max-height: 500px;
+    }
+    .message {
+        margin-bottom: 1rem;
+        padding: 0.75rem;
+        border-radius: 10px;
+        max-width: 80%;
+    }
+    .user-message {
+        background: #667eea;
+        color: white;
+        margin-left: auto;
+        text-align: right;
+    }
+    .ai-message {
+        background: #f8f9fa;
+        color: #333;
+        border-left: 4px solid #667eea;
+    }
+    .message-icon {
         margin-right: 0.5rem;
+    }
+    .input-container {
+        background: white;
+        padding: 1rem;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-top: 1rem;
     }
     .stButton>button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -65,10 +94,15 @@ st.markdown("""
         font-weight: bold;
         font-size: 1rem;
         transition: all 0.3s ease;
+        width: 100%;
     }
-    .stButton>button:hover {
+    .stButton>button:hover:not(:disabled) {
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
+    }
+    .stButton>button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
     }
     .stTextInput>div>div>input {
         border-radius: 25px;
@@ -81,12 +115,17 @@ st.markdown("""
         box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
     }
     body {
-        background-color: #f8f9fa;
+        background-color: #f5f7fb;
     }
-    .centered {
+    .card-title {
+        font-size: 1.3rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
         display: flex;
-        justify-content: center;
         align-items: center;
+    }
+    .card-icon {
+        margin-right: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -246,6 +285,14 @@ def show_graph(graph):
     HtmlFile = open("graph.html", "r", encoding="utf-8")
     components.html(HtmlFile.read(), height=500)
 
+# Initialize session state for chat
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "current_graph" not in st.session_state:
+    st.session_state.current_graph = None
+if "processing" not in st.session_state:
+    st.session_state.processing = False
+
 # Header
 st.markdown("""
 <div class="main-header">
@@ -255,36 +302,73 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Main content in columns for better layout
-col1, col2, col3 = st.columns([1, 2, 1])
+# Main dashboard layout
+col1, col2 = st.columns([7, 3])
 
+# Left column: Graph visualization
+with col1:
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    st.markdown('<div class="card-title"><span class="card-icon">📊</span>Graph View</div>', unsafe_allow_html=True)
+    
+    if st.session_state.current_graph:
+        show_graph(st.session_state.current_graph)
+    else:
+        st.info("💡 Submit a query to visualize the graph")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Right column: Chat interface
 with col2:
+    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
+    st.markdown('<div class="card-title"><span class="card-icon">💬</span>AI Assistant</div>', unsafe_allow_html=True)
+    
+    # Chat messages container
+    chat_container = st.container()
+    with chat_container:
+        st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
+        for message in st.session_state.messages:
+            if message["role"] == "user":
+                st.markdown(f'<div class="message user-message"><span class="message-icon">👤</span>{message["content"]}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="message ai-message"><span class="message-icon">🤖</span>{message["content"]}</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     # Input section
     st.markdown('<div class="input-container">', unsafe_allow_html=True)
-    st.markdown("### 💬 Ask Your Query")
-    question = st.text_input("", placeholder="e.g., Show me orders for customer ABC123", label_visibility="collapsed")
-
-    if st.button("🚀 Analyze Query", use_container_width=True):
-        if not question.strip():
-            st.error("Please enter a query first!")
-        else:
-            with st.spinner("🔄 Processing your query..."):
-                try:
-                    result = process_query(question)
-
-                    # Answer section
-                    st.markdown('<div class="result-card">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-header"><span class="section-icon">🤖</span>AI Answer</div>', unsafe_allow_html=True)
-                    st.write(result["answer"])
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                    # Graph visualization section
-                    st.markdown('<div class="result-card">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-header"><span class="section-icon">📊</span>Graph Visualization</div>', unsafe_allow_html=True)
-                    show_graph(result["graph"])
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                except Exception as e:
-                    st.error(f"❌ Error processing query: {str(e)}")
-
+    with st.form(key="query_form", clear_on_submit=True):
+        question = st.text_input("Ask your query...", placeholder="e.g., Show me orders for customer ABC123", label_visibility="collapsed")
+        submit_button = st.form_submit_button(
+            "🚀 Send Query", 
+            use_container_width=True,
+            disabled=st.session_state.processing
+        )
+    
+    if submit_button and question.strip() and not st.session_state.processing:
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": question})
+        
+        # Set processing state
+        st.session_state.processing = True
+        
+        with st.spinner("🔄 Analyzing your query..."):
+            try:
+                result = process_query(question)
+                
+                # Add AI response
+                st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
+                
+                # Update graph
+                st.session_state.current_graph = result["graph"]
+                
+                # Rerun to update UI
+                st.rerun()
+                
+            except Exception as e:
+                st.session_state.messages.append({"role": "assistant", "content": f"❌ Error: {str(e)}"})
+                st.rerun()
+        
+        # Reset processing state
+        st.session_state.processing = False
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
