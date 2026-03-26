@@ -1550,3 +1550,13 @@ class QueryService:
             },
         )
 
+
+def process_query(question: str) -> dict:
+    service = QueryService()
+    req = GraphQueryRequest(question=question)
+    resp = service.answer_question(req)
+    return {
+        "answer": resp.answer,
+        "graph": resp.graph.model_dump() if resp.graph else {"nodes": [], "edges": []}
+    }
+

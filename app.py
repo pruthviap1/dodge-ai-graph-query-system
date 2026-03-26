@@ -1,11 +1,5 @@
 import streamlit as st
-import subprocess
-import time
-import requests
-
-# Start backend
-subprocess.Popen(["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"])
-time.sleep(3)
+from backend.app.query_service import process_query
 
 st.title("AI Graph Query System")
 
@@ -13,17 +7,13 @@ question = st.text_input("Ask your query")
 
 if st.button("Submit"):
     try:
-        response = requests.post(
-            "http://localhost:8000/api/query",
-            json={"question": question}
-        )
-        data = response.json()
+        result = process_query(question)
 
         st.subheader("Answer")
-        st.write(data.get("answer"))
+        st.write(result["answer"])
 
         st.subheader("Graph")
-        st.json(data.get("graph"))
+        st.json(result["graph"])
 
     except Exception as e:
         st.error(f"Error: {e}")
